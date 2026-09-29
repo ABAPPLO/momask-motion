@@ -369,6 +369,15 @@ def api_generate():
     except Exception as e:  # BVH export is a nice-to-have; don't fail the request
         print(f'BVH export failed: {e}')
 
+    if payload.get('render_video'):
+        try:
+            from render_utils import render_motion_video
+            render_motion_video([display], pjoin(out_dir, 'animation.mp4'),
+                                fps=20, title=text[:80])
+            files['video'] = f'/results/{rid}/animation.mp4'
+        except Exception as e:
+            print(f'video render failed: {e}')
+
     return jsonify({
         'id': rid,
         'model': 'momask',
@@ -434,6 +443,16 @@ def api_generate_interaction():
         'npy1': f'/results/{rid}/person1.npy',
     }
 
+    if payload.get('render_video'):
+        try:
+            from render_utils import render_motion_video
+            render_motion_video([np.array(p) for p in result['persons']],
+                                pjoin(out_dir, 'animation.mp4'),
+                                fps=result['fps'], title=interaction[:80])
+            files['video'] = f'/results/{rid}/animation.mp4'
+        except Exception as e:
+            print(f'video render failed: {e}')
+
     return jsonify({
         'id': rid,
         'model': model_key,
@@ -491,6 +510,16 @@ def api_generate_momask_dual():
     np.save(pjoin(out_dir, 'person0.npy'), np.array(persons[0]))
     np.save(pjoin(out_dir, 'person1.npy'), np.array(persons[1]))
     files = {'npy0': f'/results/{rid}/person0.npy', 'npy1': f'/results/{rid}/person1.npy'}
+
+    if payload.get('render_video'):
+        try:
+            from render_utils import render_motion_video
+            render_motion_video([np.array(p) for p in persons],
+                                pjoin(out_dir, 'animation.mp4'),
+                                fps=20, title=(text_a + ' | ' + text_b)[:80])
+            files['video'] = f'/results/{rid}/animation.mp4'
+        except Exception as e:
+            print(f'video render failed: {e}')
 
     # pad shorter sequence so both persons share one timeline
     n = max(len(p) for p in persons)

@@ -87,6 +87,11 @@
       <span>中文提示词自动翻译成英文</span>
     </label>
 
+    <label class="check" id="video-row" title="同步渲染骨骼动画 mp4，生成时间增加约 30~90 秒">
+      <input type="checkbox" id="render-video">
+      <span>同步渲染 MP4 视频（慢 30~90 秒）</span>
+    </label>
+
     <button class="btn primary" id="generate">生成动作</button>
     <div id="status" class="status"></div>
 
@@ -95,6 +100,7 @@
       <div class="kv"><span>帧数</span><b id="info-frames">–</b></div>
       <div class="kv"><span>耗时</span><b id="info-time">–</b></div>
       <div id="translations" class="translations hidden"></div>
+      <video id="gen-video" class="gen-video hidden" controls muted loop playsinline></video>
       <div class="dl" id="dl-links"></div>
     </div>
 

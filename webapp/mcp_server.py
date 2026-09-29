@@ -121,13 +121,17 @@ def list_models() -> dict:
 
 @mcp.tool()
 def generate_motion(text: str, length_seconds: float = 0.0, seed: int = 10107,
-                    use_ik: bool = True, auto_translate: bool = True) -> dict:
+                    use_ik: bool = True, auto_translate: bool = True,
+                    render_video: bool = False) -> dict:
     """用 MoMask 生成单人动作。text 支持中文（自动翻译）；length_seconds 0=自动估计。
 
-    返回 result_id、帧数、翻译结果与文件下载路径（joints npy / bvh）。
+    render_video=True 时同时渲染骨骼动画 mp4（额外约 30~60 秒），
+    返回的 files 里包含 video 路径与 URL。其余情况返回 result_id、帧数、
+    翻译结果与文件下载路径（joints npy / bvh）。
     """
     d = _post('/api/generate', {'text': text, 'length': length_seconds, 'seed': seed,
-                                'use_ik': use_ik, 'auto_translate': auto_translate})
+                                'use_ik': use_ik, 'auto_translate': auto_translate,
+                                'render_video': render_video})
     return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
                               'translations', 'files')}
 
@@ -135,15 +139,18 @@ def generate_motion(text: str, length_seconds: float = 0.0, seed: int = 10107,
 @mcp.tool()
 def generate_interaction(model: str, interaction: str, individual_1: str = '',
                          individual_2: str = '', seed: int = 10107,
-                         auto_translate: bool = True) -> dict:
+                         auto_translate: bool = True,
+                         render_video: bool = False) -> dict:
     """用双人交互模型生成两人动作。model: 'intergen' 或 'in2in'。
 
-    interaction 是整体场景描述（如"两人拳击对打"）；in2in 可选 individual_1/2
+    interaction 是整体场景描述（如"两人拳击对打"）；in2IN 可选 individual_1/2
     分别描述每个人（如"凶狠连续出拳"/"举臂格挡后退"）。输出 210 帧 @30fps。
+    render_video=True 时同时渲染 mp4（额外约 60~90 秒），files 含 video。
     """
     d = _post('/api/generate_interaction',
               {'model': model, 'interaction': interaction, 'ind1': individual_1,
-               'ind2': individual_2, 'seed': seed, 'auto_translate': auto_translate})
+               'ind2': individual_2, 'seed': seed, 'auto_translate': auto_translate,
+               'render_video': render_video})
     return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
                               'translations', 'files')}
 
@@ -151,12 +158,16 @@ def generate_interaction(model: str, interaction: str, individual_1: str = '',
 @mcp.tool()
 def generate_momask_dual(text_a: str, text_b: str, length_seconds: float = 0.0,
                          offset_x: float = 0.9, seed: int = 10107,
-                         use_ik: bool = True, auto_translate: bool = True) -> dict:
-    """基线对比：两个单人 MoMask 动作独立生成后并排摆放（无真实交互）。"""
+                         use_ik: bool = True, auto_translate: bool = True,
+                         render_video: bool = False) -> dict:
+    """基线对比：两个单人 MoMask 动作独立生成后并排摆放（无真实交互）。
+
+    render_video=True 时同时渲染 mp4，files 含 video。
+    """
     d = _post('/api/generate_momask_dual',
               {'text_a': text_a, 'text_b': text_b, 'length': length_seconds,
                'offset_x': offset_x, 'seed': seed, 'use_ik': use_ik,
-               'auto_translate': auto_translate})
+               'auto_translate': auto_translate, 'render_video': render_video})
     return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
                               'translations', 'files')}
 

@@ -354,21 +354,24 @@ async function generate() {
     if (!text) return setStatus('请输入动作描述', 'error');
     endpoint = '/api/generate';
     body = { text, length: +$('length').value, use_ik: $('use-ik').checked, seed,
-             auto_translate: $('auto-translate').checked };
+             auto_translate: $('auto-translate').checked,
+             render_video: $('render-video').checked };
     spinnerNote = 'MoMask 生成中…';
   } else if (currentModel === 'momask_dual') {
     const a = $('dual-a').value.trim(), b = $('dual-b').value.trim();
     if (!a || !b) return setStatus('请输入两个人的动作描述', 'error');
     endpoint = '/api/generate_momask_dual';
     body = { text_a: a, text_b: b, length: +$('length').value, use_ik: $('use-ik').checked, seed,
-             offset_x: +$('offset-x').value, auto_translate: $('auto-translate').checked };
+             offset_x: +$('offset-x').value, auto_translate: $('auto-translate').checked,
+             render_video: $('render-video').checked };
     spinnerNote = 'MoMask 生成两个动作中…';
   } else if (currentModel === 'intergen') {
     const text = $('ig-prompt').value.trim();
     if (!text) return setStatus('请输入交互描述', 'error');
     endpoint = '/api/generate_interaction';
     body = { model: 'intergen', interaction: text, seed,
-             auto_translate: $('auto-translate').checked };
+             auto_translate: $('auto-translate').checked,
+             render_video: $('render-video').checked };
     spinnerNote = 'InterGen 扩散采样中（约 20~60 秒）…';
   } else if (currentModel === 'in2in') {
     const text = $('i2-interaction').value.trim();
@@ -378,6 +381,7 @@ async function generate() {
       model: 'in2in', interaction: text,
       ind1: $('i2-ind1').value.trim(), ind2: $('i2-ind2').value.trim(), seed,
       auto_translate: $('auto-translate').checked,
+      render_video: $('render-video').checked,
     };
     spinnerNote = 'in2IN 扩散采样中（约 20~60 秒）…';
   }
@@ -431,6 +435,7 @@ async function generate() {
     dl.innerHTML = '';
     const links = [];
     if (data.files) {
+      if (data.files.video) links.push(['MP4 视频', data.files.video]);
       if (data.files.bvh) links.push(['BVH', data.files.bvh]);
       if (data.files.npy0) links.push(['NPY 人物A', data.files.npy0]);
       if (data.files.npy1) links.push(['NPY 人物B', data.files.npy1]);
@@ -441,6 +446,15 @@ async function generate() {
       const a = document.createElement('a');
       a.href = url; a.textContent = label;
       dl.appendChild(a);
+    }
+    // inline video player when a rendered mp4 is available
+    const videoEl = $('gen-video');
+    if (data.files && data.files.video) {
+      videoEl.src = data.files.video;
+      videoEl.classList.remove('hidden');
+    } else {
+      videoEl.classList.add('hidden');
+      videoEl.removeAttribute('src');
     }
     $('result-info').classList.remove('hidden');
   } catch (err) {
