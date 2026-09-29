@@ -1,4 +1,9 @@
 *.pyc
+__pycache__
 checkpoints
 editing
 generation
+webapp/results
+test_report/videos
+test_report/*.log
+nohup.out

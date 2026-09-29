@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoMask · 文本生成人体动作对比台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕺</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">▲</span>
+    <div>
+      <h1>人体动作生成对比台</h1>
+      <p>单人生成 vs 双人交互生成 · MoMask / InterGen / in2IN</p>
+    </div>
+  </div>
+  <a class="gh" href="https://github.com/EricGuo5513/momask-codes" target="_blank" rel="noopener">MoMask ↗</a>
+</header>
+
+<main>
+  <aside class="panel">
+    <div class="model-tabs" id="model-tabs">
+      <button class="mtab active" data-model="momask" title="单人动作生成（CVPR 2024）">MoMask 单人</button>
+      <button class="mtab" data-model="momask_dual" title="两个单人动作独立生成后并排摆放（无真实交互的基线）">MoMask 拼合</button>
+      <button class="mtab" data-model="intergen" title="双人交互扩散模型（IJCV 2024）">InterGen</button>
+      <button class="mtab" data-model="in2in" title="双人交互 + 个体描述（CVPRW 2024）">in2IN</button>
+    </div>
+
+    <!-- momask single -->
+    <div class="model-pane" id="pane-momask">
+      <label class="field-label" for="prompt">动作描述（英文效果最佳）</label>
+      <textarea id="prompt" rows="3" placeholder="A person is running on a treadmill.">A person walks forward and waves with his right hand.</textarea>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <!-- momask dual -->
+    <div class="model-pane hidden" id="pane-momask_dual">
+      <label class="field-label">人物 A 描述<span class="pnum pa">A</span></label>
+      <textarea id="dual-a" rows="2">A person throws fierce punches with both fists.</textarea>
+      <label class="field-label">人物 B 描述<span class="pnum pb">B</span></label>
+      <textarea id="dual-b" rows="2">A person staggers backward, dodging and covering the head.</textarea>
+      <label class="field-label">两人间距 <span class="hint" id="offset-label">0.9 m</span></label>
+      <input type="range" id="offset-x" min="0.4" max="3" step="0.1" value="0.9">
+      <p class="note">⚠ 两个动作各自独立生成，人物之间<b>没有真实交互</b>（不会接触/躲闪），仅作对比基线。</p>
+    </div>
+
+    <!-- intergen -->
+    <div class="model-pane hidden" id="pane-intergen">
+      <label class="field-label" for="ig-prompt">交互描述（两人整体场景）</label>
+      <textarea id="ig-prompt" rows="3">In an intense boxing match, one is continuously punching while the other is defending and counterattacking.</textarea>
+      <div class="chips" id="chips-ig"></div>
+      <p class="note">扩散模型 50 步采样，输出两人 210 帧（30fps，约 7 秒）。</p>
+    </div>
+
+    <!-- in2in -->
+    <div class="model-pane hidden" id="pane-in2in">
+      <label class="field-label" for="i2-interaction">交互描述（整体）</label>
+      <textarea id="i2-interaction" rows="2">Two people are boxing in a match.</textarea>
+      <label class="field-label" for="i2-ind1">个体描述 A<span class="pnum pa">A</span></label>
+      <textarea id="i2-ind1" rows="2">A person throws punches aggressively moving forward.</textarea>
+      <label class="field-label" for="i2-ind2">个体描述 B<span class="pnum pb">B</span></label>
+      <textarea id="i2-ind2" rows="2">A person blocks with both arms and steps back.</textarea>
+      <p class="note">in2IN 额外支持对每个人单独下指令，可以精细控制各自的动作风格。</p>
+    </div>
+
+    <label class="field-label">动作时长 <span class="hint" id="len-label">自动</span></label>
+    <input type="range" id="length" min="0" max="9.8" step="0.2" value="0">
+    <div class="range-marks"><span>自动</span><span>4.9s</span><span>9.8s</span></div>
+
+    <div class="row">
+      <div class="grow">
+        <label class="field-label" for="seed">随机种子</label>
+        <input type="number" id="seed" value="10107">
+      </div>
+      <button class="btn ghost" id="rand-seed" title="随机种子">🎲</button>
+    </div>
+
+    <label class="check" id="ik-row">
+      <input type="checkbox" id="use-ik" checked>
+      <span>脚部 IK 后处理（仅 MoMask）</span>
+    </label>
+
+    <label class="check" id="translate-row">
+      <input type="checkbox" id="auto-translate" checked>
+      <span>中文提示词自动翻译成英文</span>
+    </label>
+
+    <button class="btn primary" id="generate">生成动作</button>
+    <div id="status" class="status"></div>
+
+    <div id="result-info" class="result-info hidden">
+      <div class="kv"><span>模型</span><b id="info-model">–</b></div>
+      <div class="kv"><span>帧数</span><b id="info-frames">–</b></div>
+      <div class="kv"><span>耗时</span><b id="info-time">–</b></div>
+      <div id="translations" class="translations hidden"></div>
+      <div class="dl" id="dl-links"></div>
+    </div>
+
+    <div id="history-wrap" class="hidden">
+      <label class="field-label">历史结果（点击切换对比）</label>
+      <div id="history" class="history"></div>
+    </div>
+
+    <footer class="tips">拖拽旋转 · 滚轮缩放 · 空格播放/暂停<br>同一提示词分别用不同模型生成，再点击历史卡片即可对比</footer>
+  </aside>
+
+  <section class="viewport">
+    <div id="canvas-wrap">
+      <div id="placeholder">
+        <div class="ph-icon">🕺</div>
+        <p>选择模型，输入描述，点击「生成动作」</p>
+      </div>
+      <div id="spinner" class="hidden">
+        <div class="ring"></div>
+        <p id="spinner-text">正在生成…</p>
+      </div>
+      <div id="legend" class="hidden"></div>
+      <div id="hud" class="hidden">
+        <button id="play" class="hud-btn">⏸</button>
+        <input type="range" id="timeline" min="0" max="100" value="0">
+        <span id="frame-label" class="mono">0 / 0</span>
+        <select id="speed">
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+        <label class="hud-check"><input type="checkbox" id="follow" checked>跟随</label>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/three.min.js"></script>
+<script src="/static/OrbitControls.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

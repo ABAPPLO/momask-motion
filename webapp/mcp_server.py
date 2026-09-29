@@ -1,0 +1,243 @@
+"""MCP server for the motion-generation test platform (MoMask / InterGen / in2IN).
+
+Lets any MCP-capable agent (Claude Desktop, Cursor, ZCode, ...) generate and
+analyze human-motion sequences through tools. All heavy lifting is delegated
+to the Flask webapp API (default http://127.0.0.1:7862).
+
+Transports:
+  streamable-http (default, LAN-accessible):  endpoint http://<host>:7864/mcp
+  stdio (single local client):                --stdio
+
+Run:
+  /home/applo/anaconda3/envs/interact/bin/python mcp_server.py [--stdio] [--port 7864]
+"""
+import argparse
+import json
+import os
+
+import httpx
+import numpy as np
+from mcp.server.mcpserver import MCPServer
+
+WEBAPP = os.environ.get('MOMASK_WEBAPP_URL', 'http://127.0.0.1:7862')
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+
+mcp = MCPServer(
+    name='momask-motion',
+    title='人体动作生成测试平台',
+    description='文本生成 3D 人体动作：单人(MoMask)、双人交互(InterGen/in2IN)，'
+                '支持中文提示词自动翻译、动作量化分析与视频渲染。',
+)
+
+
+def _post(path, payload, timeout=360.0):
+    r = httpx.post(WEBAPP + path, json=payload, timeout=timeout)
+    data = r.json()
+    if r.status_code != 200 or data.get('error'):
+        raise RuntimeError(f'webapp error: {data.get("error") or r.status_code}')
+    return data
+
+
+def _result_dir(rid):
+    d = os.path.join(RESULTS_DIR, rid)
+    if not os.path.isdir(d):
+        raise FileNotFoundError(f'unknown result id: {rid} (dir not found)')
+    return d
+
+
+def _load_persons(rid):
+    """Load joint arrays for a result id; returns (persons:list[np.ndarray], fps)."""
+    d = _result_dir(rid)
+    persons = []
+    if os.path.exists(os.path.join(d, 'person0.npy')):
+        persons.append(np.load(os.path.join(d, 'person0.npy')))
+        if os.path.exists(os.path.join(d, 'person1.npy')):
+            persons.append(np.load(os.path.join(d, 'person1.npy')))
+    elif os.path.exists(os.path.join(d, 'joints_ik.npy')):
+        persons.append(np.load(os.path.join(d, 'joints_ik.npy')))
+    elif os.path.exists(os.path.join(d, 'joints.npy')):
+        persons.append(np.load(os.path.join(d, 'joints.npy')))
+    if not persons:
+        raise FileNotFoundError(f'no joint arrays under {d}')
+    return persons
+
+
+# ------------------------------------------------------------------ metrics
+L_WRIST, R_WRIST, L_FOOT, R_FOOT, ROOT = 20, 21, 10, 11, 0
+ARM_IDX = [18, 19, 20, 21]
+LEG_IDX = [4, 5, 7, 8, 10, 11]
+
+
+def _describe(j, fps):
+    from scipy.ndimage import gaussian_filter1d
+    from scipy.signal import find_peaks
+
+    steps = 0
+    for idx in (L_FOOT, R_FOOT):
+        y = j[:, idx, 1]
+        peaks, _ = find_peaks(y - np.median(y), height=0.045,
+                              distance=max(1, int(fps * 0.3)))
+        steps += len(peaks)
+    root_v = np.linalg.norm(np.diff(j[:, ROOT, :], axis=0), axis=1) * fps
+    energy = np.linalg.norm(np.diff(j, axis=0), axis=2).mean(axis=1) * fps
+    arm_env = gaussian_filter1d(np.linalg.norm(np.diff(j[:, ARM_IDX], axis=0), axis=2).mean(axis=1), max(1, fps // 3))
+    leg_env = gaussian_filter1d(np.linalg.norm(np.diff(j[:, LEG_IDX], axis=0), axis=2).mean(axis=1), max(1, fps // 3))
+    return {
+        'frames': int(len(j)),
+        'seconds': round(len(j) / fps, 2),
+        'steps': int(steps),
+        'root_speed_mps': round(float(root_v.mean()), 2),
+        'joint_energy': round(float(energy.mean()), 2),
+        'wrist_max_height_L': round(float(j[:, L_WRIST, 1].max()), 2),
+        'wrist_max_height_R': round(float(j[:, R_WRIST, 1].max()), 2),
+        'net_displacement_xyz': [round(float(x), 2) for x in j[-1, ROOT] - j[0, ROOT]],
+        'arm_peak_time_s': round(float(arm_env.argmax()) / fps, 2),
+        'leg_peak_time_s': round(float(leg_env.argmax()) / fps, 2),
+    }
+
+
+# ------------------------------------------------------------------ tools
+@mcp.tool()
+def list_models() -> dict:
+    """列出可用的动作生成模型及各自能力，返回每个模型的适用场景与参数说明。"""
+    return {
+        'models': [
+            {'id': 'momask', 'type': 'single-person',
+             'desc': 'MoMask (CVPR 2024) 单人文本生成动作，20fps，时长可指定（0=自动，最长9.8s）',
+             'best_for': '单人动作、身体部位/方向控制'},
+            {'id': 'momask_dual', 'type': 'two-person-baseline',
+             'desc': '两个 MoMask 单人动作独立生成后并排摆放——无真实交互，仅作对比基线',
+             'best_for': '展示"单人模型做不了交互"的对照'},
+            {'id': 'intergen', 'type': 'two-person',
+             'desc': 'InterGen (IJCV 2024) 双人交互扩散模型，一条描述生成两人 210帧@30fps（约7s）',
+             'best_for': '打斗/拥抱/共舞等真实双人互动'},
+            {'id': 'in2in', 'type': 'two-person',
+             'desc': 'in2IN (CVPRW 2024) 双人扩散模型，交互描述 + 每人独立描述，210帧@30fps',
+             'best_for': '需要分别控制两人动作风格'},
+        ],
+        'notes': '所有模型支持中文提示词（自动本地翻译成英文）；生成结果用 analyze_motion/render_video 做量化分析与视频渲染。',
+    }
+
+
+@mcp.tool()
+def generate_motion(text: str, length_seconds: float = 0.0, seed: int = 10107,
+                    use_ik: bool = True, auto_translate: bool = True) -> dict:
+    """用 MoMask 生成单人动作。text 支持中文（自动翻译）；length_seconds 0=自动估计。
+
+    返回 result_id、帧数、翻译结果与文件下载路径（joints npy / bvh）。
+    """
+    d = _post('/api/generate', {'text': text, 'length': length_seconds, 'seed': seed,
+                                'use_ik': use_ik, 'auto_translate': auto_translate})
+    return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
+                              'translations', 'files')}
+
+
+@mcp.tool()
+def generate_interaction(model: str, interaction: str, individual_1: str = '',
+                         individual_2: str = '', seed: int = 10107,
+                         auto_translate: bool = True) -> dict:
+    """用双人交互模型生成两人动作。model: 'intergen' 或 'in2in'。
+
+    interaction 是整体场景描述（如"两人拳击对打"）；in2in 可选 individual_1/2
+    分别描述每个人（如"凶狠连续出拳"/"举臂格挡后退"）。输出 210 帧 @30fps。
+    """
+    d = _post('/api/generate_interaction',
+              {'model': model, 'interaction': interaction, 'ind1': individual_1,
+               'ind2': individual_2, 'seed': seed, 'auto_translate': auto_translate})
+    return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
+                              'translations', 'files')}
+
+
+@mcp.tool()
+def generate_momask_dual(text_a: str, text_b: str, length_seconds: float = 0.0,
+                         offset_x: float = 0.9, seed: int = 10107,
+                         use_ik: bool = True, auto_translate: bool = True) -> dict:
+    """基线对比：两个单人 MoMask 动作独立生成后并排摆放（无真实交互）。"""
+    d = _post('/api/generate_momask_dual',
+              {'text_a': text_a, 'text_b': text_b, 'length': length_seconds,
+               'offset_x': offset_x, 'seed': seed, 'use_ik': use_ik,
+               'auto_translate': auto_translate})
+    return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
+                              'translations', 'files')}
+
+
+@mcp.tool()
+def analyze_motion(result_id: str) -> dict:
+    """量化分析一次生成结果：步数、根移动速度、关节能量、左右腕最高点、净位移、
+    手臂/腿部活动峰值时刻（判断动作顺序）、两人根部距离范围（双人结果）。"""
+    persons = _load_persons(result_id)
+    fps = 30 if len(persons) > 1 else 20  # interaction models run at 30fps
+    out = {'result_id': result_id, 'persons': len(persons), 'fps': fps,
+           'per_person': []}
+    for i, j in enumerate(persons):
+        out['per_person'].append({'person': i, **_describe(j, fps)})
+    if len(persons) == 2:
+        dist = np.linalg.norm(persons[0][:, ROOT] - persons[1][:, ROOT], axis=1)
+        out['pair'] = {
+            'root_distance_min_m': round(float(dist.min()), 2),
+            'root_distance_max_m': round(float(dist.max()), 2),
+            'root_distance_mean_m': round(float(dist.mean()), 2),
+            'min_joint_distance_m': round(float(min(
+                np.linalg.norm(persons[0][f] - persons[1][f], axis=1).min()
+                for f in range(0, len(dist), 5))), 2),
+        }
+    return out
+
+
+@mcp.tool()
+def render_video(result_id: str, title: str = '') -> dict:
+    """把生成结果渲染成骨骼动画 mp4（多人同框），返回本地路径与下载 URL。"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib import animation
+
+    chain = [[0, 2, 5, 8, 11], [0, 1, 4, 7, 10], [0, 3, 6, 9, 12, 15],
+             [9, 14, 17, 19, 21], [9, 13, 16, 18, 20]]
+    colors = ['royalblue', 'darkorange']
+    persons = _load_persons(result_id)
+    fps = 30 if len(persons) > 1 else 20
+    n = min(len(p) for p in persons)
+
+    d = _result_dir(result_id)
+    out_path = os.path.join(d, 'animation.mp4')
+    fig = plt.figure(figsize=(6, 6), dpi=72)
+    ax = fig.add_subplot(111, projection='3d')
+    writer = animation.FFMpegWriter(fps=fps, bitrate=2400)
+    with writer.saving(fig, out_path, dpi=72):
+        for f in range(n):
+            ax.cla()
+            frames = [p[f] for p in persons]
+            allc = np.concatenate(frames, axis=0)
+            pad = 0.5
+            ax.set_xlim(allc[:, 0].min() - pad, allc[:, 0].max() + pad)
+            ax.set_ylim(allc[:, 1].min() - pad, allc[:, 1].max() + pad)
+            ax.set_zlim(allc[:, 2].min() - pad, allc[:, 2].max() + pad)
+            for ci, fr in enumerate(frames):
+                col = colors[ci % 2]
+                for ch in chain:
+                    pts = fr[ch]
+                    ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], c=col, linewidth=2.5)
+                ax.scatter(fr[:, 0], fr[:, 1], fr[:, 2], c=col, s=14)
+            if title:
+                ax.set_title(title[:80], fontsize=9)
+            ax.view_init(elev=12, azim=-90)
+            writer.grab_frame()
+    plt.close(fig)
+    return {'result_id': result_id, 'video_path': out_path,
+            'video_url': f'{WEBAPP}/results/{result_id}/animation.mp4',
+            'frames': int(n), 'fps': fps}
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--stdio', action='store_true', help='run stdio transport (single local client)')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('MCP_PORT', 7864)))
+    parser.add_argument('--host', default='0.0.0.0')
+    args = parser.parse_args()
+
+    if args.stdio:
+        mcp.run(transport='stdio')
+    else:
+        mcp.run(transport='streamable-http', host=args.host, port=args.port,
+                streamable_http_path='/mcp', stateless_http=True)
