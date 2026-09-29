@@ -19,7 +19,34 @@ import httpx
 import numpy as np
 from mcp.server.mcpserver import MCPServer
 
+# Internal API base (MCP server and webapp always share one host)
 WEBAPP = os.environ.get('MOMASK_WEBAPP_URL', 'http://127.0.0.1:7862')
+
+
+def _lan_ip():
+    """Best-effort LAN IP for building URLs handed to remote agents."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(('8.8.8.8', 80))  # no packets sent; just picks a route
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return '127.0.0.1'
+
+
+# Public base used ONLY for URLs returned to agents (env-overridable)
+PUBLIC_URL = os.environ.get('MOMASK_PUBLIC_URL', f'http://{_lan_ip()}:7862').rstrip('/')
+
+
+def _abs_urls(files: dict) -> dict:
+    """Turn relative /results/... paths into absolute URLs agents can fetch."""
+    return {k: (PUBLIC_URL + v if v.startswith('/') else v) for k, v in (files or {}).items()}
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
 
 mcp = MCPServer(
@@ -132,8 +159,10 @@ def generate_motion(text: str, length_seconds: float = 0.0, seed: int = 10107,
     d = _post('/api/generate', {'text': text, 'length': length_seconds, 'seed': seed,
                                 'use_ik': use_ik, 'auto_translate': auto_translate,
                                 'render_video': render_video})
-    return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
-                              'translations', 'files')}
+    return {'id': d['id'], 'model': d['model'], 'm_length': d['m_length'],
+            'fps': d['fps'], 'seconds': d['seconds'], 'gen_time': d['gen_time'],
+            'translations': d['translations'],
+            'files': d['files'], 'urls': _abs_urls(d['files'])}
 
 
 @mcp.tool()
@@ -151,8 +180,10 @@ def generate_interaction(model: str, interaction: str, individual_1: str = '',
               {'model': model, 'interaction': interaction, 'ind1': individual_1,
                'ind2': individual_2, 'seed': seed, 'auto_translate': auto_translate,
                'render_video': render_video})
-    return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
-                              'translations', 'files')}
+    return {'id': d['id'], 'model': d['model'], 'm_length': d['m_length'],
+            'fps': d['fps'], 'seconds': d['seconds'], 'gen_time': d['gen_time'],
+            'translations': d['translations'],
+            'files': d['files'], 'urls': _abs_urls(d['files'])}
 
 
 @mcp.tool()
@@ -168,8 +199,10 @@ def generate_momask_dual(text_a: str, text_b: str, length_seconds: float = 0.0,
               {'text_a': text_a, 'text_b': text_b, 'length': length_seconds,
                'offset_x': offset_x, 'seed': seed, 'use_ik': use_ik,
                'auto_translate': auto_translate, 'render_video': render_video})
-    return {k: d[k] for k in ('id', 'model', 'm_length', 'fps', 'seconds', 'gen_time',
-                              'translations', 'files')}
+    return {'id': d['id'], 'model': d['model'], 'm_length': d['m_length'],
+            'fps': d['fps'], 'seconds': d['seconds'], 'gen_time': d['gen_time'],
+            'translations': d['translations'],
+            'files': d['files'], 'urls': _abs_urls(d['files'])}
 
 
 @mcp.tool()
@@ -236,7 +269,7 @@ def render_video(result_id: str, title: str = '') -> dict:
             writer.grab_frame()
     plt.close(fig)
     return {'result_id': result_id, 'video_path': out_path,
-            'video_url': f'{WEBAPP}/results/{result_id}/animation.mp4',
+            'video_url': f'{PUBLIC_URL}/results/{result_id}/animation.mp4',
             'frames': int(n), 'fps': fps}
 
 

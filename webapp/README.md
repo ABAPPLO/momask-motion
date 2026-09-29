@@ -59,7 +59,7 @@ pip install numpy==1.26.4 scipy yacs clip-anytorch==2.5.2 matplotlib pillow tqdm
 
 局域网 Agent 直接连 URL（推荐，Claude Code / Cursor / ZCode 通用）：
 ```json
-{ "mcpServers": { "momask-motion": { "type": "streamable-http", "url": "http://10.168.1.112:7864/mcp" } } }
+{ "mcpServers": { "momask-motion": { "type": "streamable-http", "url": "http://<服务器IP>:7864/mcp" } } }
 ```
 
 本机 Claude Desktop 用 stdio 模式：
@@ -92,3 +92,7 @@ pip install numpy==1.26.4 scipy yacs clip-anytorch==2.5.2 matplotlib pillow tqdm
 - 翻译：`auto_translate: true`（默认）时，含中文的字段会先本地译成英文，响应中 `translations` 字段记录 `{字段: {src, en}}`
 
 > 注意：InterDiff（ICCV 2023）调研后确认是**人-物体**交互生成（操纵箱子等），并非双人交互，故未纳入对比。
+
+> **返回 URL 说明**：MCP 工具返回的 `urls` 是 Agent 可直接访问的绝对地址，基址默认自动取本机局域网 IP；
+> 也可用环境变量覆盖：`MOMASK_PUBLIC_URL=http://your-host:7862 python webapp/mcp_server.py`。
+> Web API 返回的 `files` 保持相对路径（`/results/...`），由前端相对解析，天然适配任意主机名访问。
