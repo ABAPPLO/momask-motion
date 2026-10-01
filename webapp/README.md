@@ -1,6 +1,6 @@
-# 人体动作生成对比台（MoMask / InterGen / in2IN）
+# 人体动作生成对比台（MoMask / InterGen / in2IN / Kimodo）
 
-基于 Flask + three.js 的本地测试界面，支持四种子模式，可在同一 3D 视口中对比：
+基于 Flask + three.js 的本地测试界面，支持五种模式，可在同一 3D 视口中对比：
 
 | 模式 | 模型 | 说明 | 耗时（2080 Ti） |
 |------|------|------|------|
@@ -8,6 +8,13 @@
 | MoMask 拼合 | momask ×2 | 两个单人动作独立生成后并排摆放（**无真实交互**，作对比基线） | ~5s |
 | InterGen | [InterGen](https://github.com/tr3e/InterGen)（IJCV 2024） | 双人交互扩散模型，一条描述生成两人互动动作 | ~20-40s |
 | in2IN | [in2IN](https://github.com/pabloruizponce/in2IN)（CVPRW 2024） | 双人扩散模型，支持交互描述 + 每人独立描述 | ~15s |
+| Kimodo | [nv-tlabs/kimodo](https://github.com/nv-tlabs/kimodo)（NVIDIA, 2026） | 原版 SOMA-RP v1.1，700h 生产级动捕训练，SOMA 77 关节（含手指）@30fps | **~2.5-4 分钟**（文本编码在 CPU） |
+
+**Kimodo 说明**：
+- 官方全 GPU 需 ~17GB 显存；本项目用 `TEXT_ENCODER_DEVICE=cpu` 把 LLM2Vec(Llama-3-8B) 编码器放进内存，GPU 显存占用 <0.5GB
+- gated 的 meta-llama 基座通过本地补丁适配器解决：`/home/applo/project/models/llm2vec-mntp`（adapter_config 已改指向同权重镜像 NousResearch/Meta-Llama-3-8B-Instruct）
+- 常驻 sidecar：`webapp/kimodo_server.py`（端口 7865，主服务自动拉起；conda env `kimodo`，含编译安装的 MotionCorrection C++ 扩展）
+- 生成偏慢是 CPU 文本编码的瓶颈（~2-3 分钟/提示词）；扩散本体在 GPU 上只需 ~10 秒
 
 **中文输入支持**：输入包含中文的提示词时自动本地翻译成英文再送给模型（默认开启，面板可关）。
 翻译服务为独立 sidecar 进程（`webapp/translator_server.py`，端口 7863，由主服务自动拉起），

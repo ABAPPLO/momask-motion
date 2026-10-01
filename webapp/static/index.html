@@ -26,6 +26,15 @@
       <button class="mtab" data-model="momask_dual" title="两个单人动作独立生成后并排摆放（无真实交互的基线）">MoMask 拼合</button>
       <button class="mtab" data-model="intergen" title="双人交互扩散模型（IJCV 2024）">InterGen</button>
       <button class="mtab" data-model="in2in" title="双人交互 + 个体描述（CVPRW 2024）">in2IN</button>
+      <button class="mtab" data-model="kimodo" title="NVIDIA Kimodo 原版（700h 生产级动捕，SOMA 77 关节，30fps）">Kimodo</button>
+    </div>
+
+    <!-- kimodo -->
+    <div class="model-pane hidden" id="pane-kimodo">
+      <label class="field-label" for="kd-prompt">动作描述（NVIDIA Kimodo，700 小时生产级动捕训练）</label>
+      <textarea id="kd-prompt" rows="3">A person walks forward, then turns around and walks back.</textarea>
+      <div class="chips" id="chips-kd"></div>
+      <p class="note">SOMA 77 关节骨架（含手指），30fps，时长在下方滑块选择（0=默认 5 秒）。首次调用需加载约 17GB 文本编码器到内存，可能等待 2~5 分钟；文本编码在 CPU 上运行，不占显存。</p>
     </div>
 
     <!-- momask single -->

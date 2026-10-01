@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 
@@ -389,6 +390,111 @@ def api_generate():
         'gen_time': round(gen_time, 2),
         'used_ik': use_ik,
         'joints': np.round(display, 4).tolist(),
+        'files': files,
+    })
+
+
+# ------------------------------------------------------- kimodo (NVIDIA original)
+KIMODO_URL = 'http://127.0.0.1:7865'
+KIMODO_SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'kimodo_server.py')
+KIMODO_ENV_PYTHON = '/home/applo/anaconda3/envs/kimodo/bin/python'
+_kimodo_proc = None
+KIMODO_LOCK = threading.Lock()
+
+
+def kimodo_alive():
+    try:
+        with urllib.request.urlopen(KIMODO_URL + '/health', timeout=3) as r:
+            return json.load(r).get('status') == 'ok'
+    except Exception:
+        return False
+
+
+def ensure_kimodo(timeout=600):
+    """Start the kimodo sidecar if needed; first load moves ~17GB into RAM (~2-5 min)."""
+    global _kimodo_proc
+    if kimodo_alive():
+        return True
+    with KIMODO_LOCK:
+        if kimodo_alive():
+            return True
+        if not os.path.exists(KIMODO_SERVER):
+            return False
+        log = open('/tmp/kimodo_server.log', 'a')
+        _kimodo_proc = subprocess.Popen(
+            [KIMODO_ENV_PYTHON, KIMODO_SERVER],
+            stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if kimodo_alive():
+                return True
+            if _kimodo_proc.poll() is not None:
+                return False
+            time.sleep(3)
+        return False
+
+
+@app.route('/api/generate_kimodo', methods=['POST'])
+def api_generate_kimodo():
+    payload = request.get_json(force=True, silent=True) or {}
+    translations = translate_payload_texts(payload, ['text'])
+    text = (payload.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'text prompt is required'}), 400
+    try:
+        duration = max(1.0, min(float(payload.get('duration', 5.0) or 5.0), 10.0))
+    except (TypeError, ValueError):
+        duration = 5.0
+    try:
+        seed = int(payload.get('seed', 10107))
+    except (TypeError, ValueError):
+        seed = 10107
+
+    if not ensure_kimodo():
+        return jsonify({'error': 'kimodo sidecar unavailable (see /tmp/kimodo_server.log)'}), 503
+
+    body = json.dumps({'text': text, 'duration_seconds': duration, 'seed': seed}).encode()
+    req = urllib.request.Request(KIMODO_URL + '/generate', data=body,
+                                 headers={'Content-Type': 'application/json'})
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r:
+            result = json.load(r)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode()[:800]
+        return jsonify({'error': f'kimodo failed: {detail}'}), 500
+    gen_time = time.time() - t0
+    if result.get('error'):
+        return jsonify({'error': result['error']}), 500
+
+    joints = np.array(result['joints'])
+    rid = uuid.uuid4().hex[:12]
+    out_dir = pjoin(RESULTS_DIR, rid)
+    os.makedirs(out_dir, exist_ok=True)
+    np.save(pjoin(out_dir, 'joints.npy'), joints)
+    files = {'npy': f'/results/{rid}/joints.npy'}
+
+    if payload.get('render_video'):
+        try:
+            from render_utils import render_motion_video
+            render_motion_video([joints], pjoin(out_dir, 'animation.mp4'),
+                                fps=result['fps'], title=text[:80],
+                                skeleton=result.get('skeleton', 'soma77'))
+            files['video'] = f'/results/{rid}/animation.mp4'
+        except Exception as e:
+            print(f'video render failed: {e}')
+
+    return jsonify({
+        'id': rid,
+        'model': 'kimodo',
+        'text': text,
+        'translations': translations,
+        'm_length': result['nframes'],
+        'fps': result['fps'],
+        'seconds': round(result['nframes'] / result['fps'], 1),
+        'gen_time': round(gen_time, 1),
+        'skeleton': result.get('skeleton', 'soma77'),
+        'joints': result['joints'],
         'files': files,
     })
 

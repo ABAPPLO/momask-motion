@@ -10,6 +10,56 @@ const KINEMATIC_CHAIN = [
 ];
 const HEAD_JOINT = 15;
 
+// SOMA77 edge list (a, b, radius) generated from nv-tlabs/kimodo hierarchy;
+// facial joints (Jaw/Eyes) skipped. Mirrors webapp/render_utils.py.
+function buildSomaEdges() {
+  const FINGERS = { Thumb: [1, 2, 3], Index: [1, 2, 3, 4], Middle: [1, 2, 3, 4], Ring: [1, 2, 3, 4], Pinky: [1, 2, 3, 4] }; // thumb has no 4
+  const names = ['Hips','Spine1','Spine2','Chest','Neck1','Neck2','Head','HeadEnd','Jaw','LeftEye','RightEye'];
+  const parents = { Spine1:'Hips', Spine2:'Spine1', Chest:'Spine2', Neck1:'Chest', Neck2:'Neck1',
+                    Head:'Neck2', HeadEnd:'Head', Jaw:'Head', LeftEye:'Head', RightEye:'Head' };
+  for (const s of ['Left','Right']) {
+    names.push(`${s}Shoulder`,`${s}Arm`,`${s}ForeArm`,`${s}Hand`);
+    parents[`${s}Shoulder`]='Chest'; parents[`${s}Arm`]=`${s}Shoulder`; parents[`${s}ForeArm`]=`${s}Arm`; parents[`${s}Hand`]=`${s}ForeArm`;
+    for (const f of Object.keys(FINGERS)) {
+      for (const i of FINGERS[f]) {
+        names.push(`${s}Hand${f}${i}`);
+        parents[`${s}Hand${f}${i}`] = i>1 ? `${s}Hand${f}${i-1}` : `${s}Hand`;
+      }
+      names.push(`${s}Hand${f}End`);
+      parents[`${s}Hand${f}End`] = `${s}Hand${f}${FINGERS[f][FINGERS[f].length-1]}`;
+    }
+  }
+  names.push('LeftLeg','LeftShin','LeftFoot','LeftToeBase','LeftToeEnd','RightLeg','RightShin','RightFoot','RightToeBase','RightToeEnd');
+  Object.assign(parents, { LeftLeg:'Hips', LeftShin:'LeftLeg', LeftFoot:'LeftShin', LeftToeBase:'LeftFoot', LeftToeEnd:'LeftToeBase',
+                           RightLeg:'Hips', RightShin:'RightLeg', RightFoot:'RightShin', RightToeBase:'RightFoot', RightToeEnd:'RightToeBase' });
+  if (names.length !== 77) throw new Error('SOMA joint count mismatch: ' + names.length);
+  const skip = new Set(['Jaw','LeftEye','RightEye']);
+  const thin = new Set(names.map((n,i)=>({n,i})).filter(x=>x.n.includes('Hand')||x.n.includes('Toe')).map(x=>x.i));
+  const spine = new Set([0,1,2,3,4,5,6]);
+  const edges = [];
+  names.forEach((n, i) => {
+    const p = parents[n];
+    if (!p || skip.has(n) || skip.has(p)) return;
+    const pi = names.indexOf(p);
+    const r = (thin.has(i)||thin.has(pi)) ? 0.008 : (spine.has(pi) ? 0.024 : 0.013);
+    edges.push({ a: pi, b: i, radius: r });
+  });
+  return { joints: names.length, head: 7, edges };
+}
+
+const SKELETONS = { smpl22: null, soma77: buildSomaEdges() };
+{
+  // smpl22 edges from chains
+  const seen = new Set(); const edges = [];
+  KINEMATIC_CHAIN.forEach((chain) => {
+    for (let i = 0; i < chain.length - 1; i++) {
+      const key = Math.min(chain[i], chain[i+1]) + '-' + Math.max(chain[i], chain[i+1]);
+      if (!seen.has(key)) { seen.add(key); edges.push({ a: chain[i], b: chain[i+1], radius: 0.014 }); }
+    }
+  });
+  SKELETONS.smpl22 = { joints: 22, head: HEAD_JOINT, edges };
+}
+
 const PERSON_COLORS = [
   { joint: 0x5b8cff, bone: 0x7f93c9, head: 0xe8ecf3, trail: 0x38e0c8, label: '人物 A' },
   { joint: 0xff9e5b, bone: 0xc98a5f, head: 0xf3e3d0, trail: 0xffd166, label: '人物 B' },
@@ -20,6 +70,7 @@ const MODEL_INFO = {
   momask_dual: 'MoMask 拼合',
   intergen: 'InterGen',
   in2in: 'in2IN',
+  kimodo: 'Kimodo (NVIDIA)',
 };
 
 const EXAMPLES_SINGLE = [
@@ -77,18 +128,6 @@ try {
   wrap.appendChild(banner);
 }
 
-const BONE_PAIRS = [];
-{
-  const seen = new Set();
-  KINEMATIC_CHAIN.forEach((chain) => {
-    for (let i = 0; i < chain.length - 1; i++) {
-      const key = Math.min(chain[i], chain[i + 1]) + '-' + Math.max(chain[i], chain[i + 1]);
-      if (!seen.has(key)) { seen.add(key); BONE_PAIRS.push([chain[i], chain[i + 1]]); }
-    }
-  });
-}
-const SPINE_SET = new Set(['0-3', '3-6', '6-9', '9-12', '12-15']);
-
 if (webglOk) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
@@ -109,22 +148,22 @@ const jointGeo = webglOk ? new THREE.SphereGeometry(1, 18, 14) : null;
 const boneGeo = webglOk ? new THREE.CylinderGeometry(1, 1, 1, 10, 1, true) : null;
 const skeletons = [];
 
-function buildSkeleton(ci) {
+function buildSkeleton(ci, skeleton) {
+  const spec = SKELETONS[skeleton] || SKELETONS.smpl22;
   const c = PERSON_COLORS[ci % PERSON_COLORS.length];
   const group = new THREE.Group();
   const joints = [];
-  for (let j = 0; j < 22; j++) {
-    const mat = new THREE.MeshPhongMaterial({ color: j === HEAD_JOINT ? c.head : c.joint, shininess: 70 });
+  for (let j = 0; j < spec.joints; j++) {
+    const mat = new THREE.MeshPhongMaterial({ color: j === spec.head ? c.head : c.joint, shininess: 70 });
     const m = new THREE.Mesh(jointGeo, mat);
-    m.scale.setScalar(j === HEAD_JOINT ? 0.055 : 0.024);
+    m.scale.setScalar(j === spec.head ? 0.055 : (spec.joints > 22 ? 0.016 : 0.024));
     group.add(m);
     joints.push(m);
   }
-  const bones = BONE_PAIRS.map(([a, b]) => {
-    const key = Math.min(a, b) + '-' + Math.max(a, b);
-    const mat = new THREE.MeshPhongMaterial({ color: SPINE_SET.has(key) ? c.bone : c.bone, shininess: 40 });
+  const bones = spec.edges.map(({ a, b, radius }) => {
+    const mat = new THREE.MeshPhongMaterial({ color: c.bone, shininess: 40 });
     const mesh = new THREE.Mesh(boneGeo, mat);
-    mesh.userData = { a, b, radius: SPINE_SET.has(key) ? 0.021 : 0.013 };
+    mesh.userData = { a, b, radius };
     group.add(mesh);
     return mesh;
   });
@@ -156,13 +195,21 @@ const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpDir = new THREE
 
 function applyFrame(f) {
   if (!webglOk || !motion) return;
+  const skeleton = motion.skeleton || 'smpl22';
   motion.persons.forEach((jointsData, ci) => {
-    if (!skeletons[ci]) skeletons[ci] = buildSkeleton(ci);
+    if (!skeletons[ci] || skeletons[ci].builtFor !== skeleton) {
+      if (skeletons[ci]) { scene.remove(skeletons[ci].group); skeletons[ci] = null; }
+      skeletons[ci] = buildSkeleton(ci, skeleton);
+      skeletons[ci].builtFor = skeleton;
+    }
     const frame = jointsData[Math.min(f, jointsData.length - 1)];
     const sk = skeletons[ci];
-    for (let j = 0; j < 22; j++) sk.joints[j].position.set(frame[j][0], frame[j][1], frame[j][2]);
+    for (let j = 0; j < sk.joints.length && j < frame.length; j++) {
+      sk.joints[j].position.set(frame[j][0], frame[j][1], frame[j][2]);
+    }
     for (const mesh of sk.bones) {
       const { a, b, radius } = mesh.userData;
+      if (a >= frame.length || b >= frame.length) { mesh.visible = false; continue; }
       tmpA.set(frame[a][0], frame[a][1], frame[a][2]);
       tmpB.set(frame[b][0], frame[b][1], frame[b][2]);
       tmpDir.subVectors(tmpB, tmpA);
@@ -280,6 +327,13 @@ function addChips(containerId, texts, targetId) {
 }
 addChips('chips', EXAMPLES_SINGLE, 'prompt');
 addChips('chips-ig', EXAMPLES_INTER, 'ig-prompt');
+addChips('chips-kd', [
+  'A person walks forward, then turns around and walks back.',
+  'A person performs a slow tai chi form.',
+  'A person does jumping jacks quickly.',
+  'A person picks up a box and puts it down gently.',
+  'A person dances energetically, spinning around.',
+], 'kd-prompt');
 
 document.querySelectorAll('.mtab').forEach((btn) => {
   btn.onclick = () => {
@@ -288,17 +342,25 @@ document.querySelectorAll('.mtab').forEach((btn) => {
     currentModel = btn.dataset.model;
     document.querySelectorAll('.model-pane').forEach((p) => p.classList.add('hidden'));
     $('pane-' + currentModel).classList.remove('hidden');
-    // controls only relevant to momask variants
+    // controls only relevant to momask variants and kimodo (duration)
+    const usesLength = currentModel.startsWith('momask') || currentModel === 'kimodo';
     const isMomask = currentModel.startsWith('momask');
-    $('len-label').parentElement.style.display = isMomask ? '' : 'none';
-    $('length').style.display = isMomask ? '' : 'none';
-    document.querySelector('.range-marks').style.display = isMomask ? '' : 'none';
+    $('len-label').parentElement.style.display = usesLength ? '' : 'none';
+    $('length').style.display = usesLength ? '' : 'none';
+    document.querySelector('.range-marks').style.display = usesLength ? '' : 'none';
     $('ik-row').style.display = isMomask ? '' : 'none';
+    if (currentModel === 'kimodo') {
+      $('len-label').textContent = $('length').value === '0' ? '5 秒(默认)' : (+$('length').value).toFixed(1) + ' 秒';
+    }
   };
 });
 
 $('length').addEventListener('input', () => {
-  $('len-label').textContent = $('length').value === '0' ? '自动' : (+$('length').value).toFixed(1) + ' 秒';
+  if (currentModel === 'kimodo') {
+    $('len-label').textContent = $('length').value === '0' ? '5 秒(默认)' : (+$('length').value).toFixed(1) + ' 秒';
+  } else {
+    $('len-label').textContent = $('length').value === '0' ? '自动' : (+$('length').value).toFixed(1) + ' 秒';
+  }
 });
 $('offset-x').addEventListener('input', () => {
   $('offset-label').textContent = (+$('offset-x').value).toFixed(1) + ' m';
@@ -384,6 +446,15 @@ async function generate() {
       render_video: $('render-video').checked,
     };
     spinnerNote = 'in2IN 扩散采样中（约 20~60 秒）…';
+  } else if (currentModel === 'kimodo') {
+    const text = $('kd-prompt').value.trim();
+    if (!text) return setStatus('请输入动作描述', 'error');
+    endpoint = '/api/generate_kimodo';
+    const len = +$('length').value;
+    body = { text, duration: len > 0 ? len : 5.0, seed,
+             auto_translate: $('auto-translate').checked,
+             render_video: $('render-video').checked };
+    spinnerNote = 'Kimodo 扩散采样中（首次需加载模型，2~5 分钟）…';
   }
 
   $('generate').disabled = true;
