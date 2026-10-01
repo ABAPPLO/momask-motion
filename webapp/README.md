@@ -103,3 +103,11 @@ pip install numpy==1.26.4 scipy yacs clip-anytorch==2.5.2 matplotlib pillow tqdm
 > **返回 URL 说明**：MCP 工具返回的 `urls` 是 Agent 可直接访问的绝对地址，基址默认自动取本机局域网 IP；
 > 也可用环境变量覆盖：`MOMASK_PUBLIC_URL=http://your-host:7862 python webapp/mcp_server.py`。
 > Web API 返回的 `files` 保持相对路径（`/results/...`），由前端相对解析，天然适配任意主机名访问。
+
+**启动 Kimodo sidecar（可选，主服务会自动拉起）**：
+
+```bash
+/home/applo/anaconda3/envs/kimodo/bin/python webapp/kimodo_server.py   # 端口 7865
+```
+
+MCP 工具 `generate_kimodo(text, duration_seconds, seed, auto_translate, render_video)` 同步可用；`analyze_motion` / `render_video` 已适配 SOMA 77 关节索引。
