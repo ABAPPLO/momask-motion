@@ -125,3 +125,8 @@ bash webapp/start.sh stop      # 停止全部
 
 - 各模式能力由后端 `/api/health` 的 `models_enabled` 统一暴露，网页标签页自动禁用不可用模型，MCP `list_models` 同步反映
 - `auto` 判定规则：无 GPU 或空闲显存 <4GB → minimal；可用内存 <26GB 或核数 <4 → lite；否则 full
+
+## 时间对比（同题多模型基准）
+
+- **网页**：任意模型标签下点「⏱ 同题多模型对比」——同一提示词+种子依次跑当前组（单人组 momask+kimodo / 双人组 momask_dual+intergen+in2in），实时进度，结果表含**生成耗时、输出帧数、生成速率（帧/秒）条形图**，点击行可切换回放
+- **MCP**：`compare_models(text, group='single'|'pair', text_b, seed, ...)` 返回同样指标 + fastest 标注；模式禁用的模型自动跳过并列在 skipped_disabled

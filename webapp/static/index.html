@@ -102,6 +102,7 @@
     </label>
 
     <button class="btn primary" id="generate">生成动作</button>
+    <button class="btn compare" id="compare-btn">⏱ 同题多模型对比（含耗时）</button>
     <div id="status" class="status"></div>
 
     <div id="result-info" class="result-info hidden">
@@ -111,6 +112,12 @@
       <div id="translations" class="translations hidden"></div>
       <video id="gen-video" class="gen-video hidden" controls muted loop playsinline></video>
       <div class="dl" id="dl-links"></div>
+    </div>
+
+    <div id="compare-wrap" class="hidden">
+      <label class="field-label">⏱ 对比结果（点击行切换回放）</label>
+      <p class="note" id="cmp-progress">准备对比…</p>
+      <div id="compare-table"></div>
     </div>
 
     <div id="history-wrap" class="hidden">

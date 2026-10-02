@@ -415,6 +415,7 @@ function renderHistory() {
     const resp = await fetch('/api/health');
     const h = await resp.json();
     const enabled = h.models_enabled || {};
+    modeEnabled = enabled;
     document.querySelectorAll('.mtab').forEach((btn) => {
       const m = btn.dataset.model;
       if (enabled[m] === false) {
@@ -430,6 +431,128 @@ function renderHistory() {
     }
   } catch (e) { /* health unavailable — leave all tabs enabled */ }
 })();
+
+// ---------------------------------------------------------------- compare (time benchmark)
+const COMPARE_GROUPS = {
+  single: ['momask', 'kimodo'],
+  pair: ['momask_dual', 'intergen', 'in2in'],
+};
+let modeEnabled = null; // filled by initMode
+
+function groupOf(model) {
+  return COMPARE_GROUPS.single.includes(model) ? 'single' : 'pair';
+}
+
+async function runCompare() {
+  const group = groupOf(currentModel);
+  const candidates = COMPARE_GROUPS[group].filter((m) => !modeEnabled || modeEnabled[m] !== false);
+  if (candidates.length < 2) return setStatus('当前模式下可对比的模型不足 2 个', 'error');
+
+  const seed = +$('seed').value || 10107;
+  const autoTranslate = $('auto-translate').checked;
+  const lenVal = +$('length').value;
+  const requests = candidates.map((m) => ({ model: m, ...buildCompareBody(m, lenVal, seed, autoTranslate) }));
+
+  $('compare-btn').disabled = true;
+  $('generate').disabled = true;
+  $('compare-wrap').classList.remove('hidden');
+  $('compare-table').innerHTML = '';
+  const rows = [];
+  for (let i = 0; i < requests.length; i++) {
+    const r = requests[i];
+    const prog = $('cmp-progress');
+    if (prog) prog.textContent = `对比中 ${i + 1}/${requests.length}：${MODEL_INFO[r.model]}（${MODEL_TIMING_HINT[r.model] || '约几秒~几十秒'}）…`;
+    setStatus('', '');
+    const t0 = performance.now();
+    try {
+      const resp = await fetch(r.endpoint, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(r.body),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      data.persons = data.persons || [data.joints];
+      delete data.joints;
+      loadMotion(data);
+      pushHistory(data);
+      rows.push({
+        model: r.model, label: MODEL_INFO[r.model], gen_time: data.gen_time,
+        m_length: data.m_length, fps: data.fps, seconds: data.seconds, rec: data, ok: true,
+      });
+    } catch (err) {
+      rows.push({ model: r.model, label: MODEL_INFO[r.model], gen_time: null, error: String(err.message || err).slice(0, 80), ok: false });
+    }
+    renderCompareTable(rows, group);
+  }
+  $('cmp-progress').textContent = '✓ 对比完成（结果可点击回放，已存入历史）';
+  $('compare-btn').disabled = false;
+  $('generate').disabled = false;
+}
+
+const MODEL_TIMING_HINT = {
+  momask: '约 3~5 秒', momask_dual: '约 5~8 秒', intergen: '约 20 秒',
+  in2in: '约 20 秒', kimodo: '首次约 3 分钟',
+};
+
+function buildCompareBody(model, lenVal, seed, autoTranslate) {
+  // prompts come from the current tab; for cross-model reuse we take the
+  // group-appropriate text and fill sensible defaults
+  if (groupOf(model) === 'single') {
+    const text = currentModel === 'kimodo' ? $('kd-prompt').value.trim() : $('prompt').value.trim() || $('kd-prompt').value.trim();
+    if (model === 'kimodo') {
+      return { endpoint: '/api/generate_kimodo',
+               body: { text, duration: lenVal > 0 ? lenVal : 5.0, seed, auto_translate: autoTranslate } };
+    }
+    return { endpoint: '/api/generate',
+             body: { text, length: lenVal, use_ik: $('use-ik').checked, seed, auto_translate: autoTranslate } };
+  }
+  // pair group: unify the interaction prompt from whichever pair tab is active
+  const interaction = $('ig-prompt').value.trim() || $('i2-interaction').value.trim() || $('dual-a').value.trim();
+  if (model === 'momask_dual') {
+    const a = interaction || 'A person punches.';
+    const b = $('i2-ind2').value.trim() || $('dual-b').value.trim() || 'A person blocks and steps back.';
+    return { endpoint: '/api/generate_momask_dual',
+             body: { text_a: a, text_b: b, length: lenVal, offset_x: +$('offset-x').value, seed, auto_translate: autoTranslate } };
+  }
+  if (model === 'intergen') {
+    return { endpoint: '/api/generate_interaction',
+             body: { model: 'intergen', interaction, seed, auto_translate: autoTranslate } };
+  }
+  return { endpoint: '/api/generate_interaction',
+           body: { model: 'in2in', interaction,
+                   ind1: $('i2-ind1').value.trim(), ind2: $('i2-ind2').value.trim(),
+                   seed, auto_translate: autoTranslate } };
+}
+
+function renderCompareTable(rows, group) {
+  const okRows = rows.filter((r) => r.ok);
+  const maxTime = Math.max(...okRows.map((r) => r.gen_time || 0), 0.001);
+  const maxRate = Math.max(...okRows.map((r) => (r.m_length || 0) / (r.gen_time || 1)), 0.001);
+  const head = `<div class="cmp-row cmp-head"><span>模型</span><span>生成耗时</span><span>输出</span><span>生成速率</span></div>`;
+  const bodyHtml = rows.map((r) => {
+    if (!r.ok) {
+      return `<div class="cmp-row failed"><span>${r.label}</span><span colspan="3">✗ ${r.error}</span></div>`;
+    }
+    const rate = (r.m_length / r.gen_time).toFixed(1);
+    return `<div class="cmp-row" data-model="${r.model}">
+      <span>${r.label}</span>
+      <span class="cmp-time">${r.gen_time}s<div class="cmp-bar"><i style="width:${(r.gen_time / maxTime * 100).toFixed(0)}%"></i></div></span>
+      <span>${r.m_length}帧@${r.fps} (${r.seconds}s)</span>
+      <span>${rate} 帧/s<div class="cmp-bar fast"><i style="width:${(rate / maxRate * 100).toFixed(0)}%"></i></div></span>
+    </div>`;
+  }).join('');
+  const label = group === 'single' ? '单人组' : '双人组';
+  $('compare-table').innerHTML = head + bodyHtml +
+    `<p class="note">⚡ 生成速率 = 输出帧数 ÷ 耗时（越高越快）。${label}各模型使用同一提示词与种子 ${$('seed').value}。</p>`;
+  $('compare-table').querySelectorAll('.cmp-row[data-model]').forEach((el) => {
+    el.onclick = () => {
+      const row = rows.find((r) => r.model === el.dataset.model);
+      if (row && row.ok) { loadMotion(row.rec); renderHistory(); }
+    };
+  });
+}
+
+$('compare-btn').onclick = () => { runCompare(); };
 
 async function generate() {
   let body, endpoint, spinnerNote;

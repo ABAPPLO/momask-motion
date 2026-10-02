@@ -14,6 +14,7 @@ Run:
 import argparse
 import json
 import os
+import time
 
 import httpx
 import numpy as np
@@ -244,6 +245,61 @@ def generate_kimodo(text: str, duration_seconds: float = 5.0, seed: int = 10107,
             'skeleton': d.get('skeleton', 'soma77'),
             'translations': d['translations'],
             'files': d['files'], 'urls': _abs_urls(d['files'])}
+
+
+@mcp.tool()
+def compare_models(text: str, group: str = 'single', length_seconds: float = 0.0,
+                   seed: int = 10107, auto_translate: bool = True,
+                   text_b: str = '') -> dict:
+    """同一提示词依次跑多个模型，返回时间对比表（生成耗时/帧数/生成速率）。
+
+    group='single' 对比 momask + kimodo（单人提示词）；group='pair' 对比
+    momask_dual + intergen + in2in（交互提示词，text_b 缺省时人物B复用 text）。
+    自动跳过当前部署模式下未启用的模型。耗时较长（含 Kimodo 时约 3~5 分钟）。
+    """
+    groups = {
+        'single': ['momask', 'kimodo'],
+        'pair': ['momask_dual', 'intergen', 'in2in'],
+    }
+    if group not in groups:
+        return {'error': f"group must be 'single' or 'pair', got {group!r}"}
+    try:
+        enabled = httpx.get(WEBAPP + '/api/health', timeout=10).json().get('models_enabled', {})
+    except Exception:
+        enabled = {}
+    todo = [m for m in groups[group] if enabled.get(m, True)]
+    results = []
+    for m in todo:
+        if m == 'momask':
+            ep, body = '/api/generate', {'text': text, 'length': length_seconds, 'seed': seed,
+                                         'auto_translate': auto_translate}
+        elif m == 'kimodo':
+            ep, body = '/api/generate_kimodo', {'text': text, 'duration': length_seconds or 5.0,
+                                                'seed': seed, 'auto_translate': auto_translate}
+        elif m == 'momask_dual':
+            ep, body = '/api/generate_momask_dual', {'text_a': text, 'text_b': text_b or text,
+                                                     'length': length_seconds,
+                                                     'seed': seed, 'auto_translate': auto_translate}
+        else:
+            ep, body = '/api/generate_interaction', {'model': m, 'interaction': text,
+                                                     'seed': seed, 'auto_translate': auto_translate}
+        t0 = time.time()
+        try:
+            d = _post(ep, body, timeout=600)
+            gen = d.get('gen_time') or round(time.time() - t0, 1)
+            results.append({'model': m, 'ok': True, 'gen_time_s': gen,
+                            'frames': d.get('m_length'), 'fps': d.get('fps'),
+                            'seconds': d.get('seconds'),
+                            'frames_per_sec': round((d.get('m_length') or 0) / max(gen, 0.1), 1),
+                            'result_id': d.get('id')})
+        except Exception as e:
+            results.append({'model': m, 'ok': False, 'error': str(e)[:150]})
+    ok = [r for r in results if r['ok']]
+    fastest = min(ok, key=lambda r: r['gen_time_s'])['model'] if ok else None
+    return {'group': group, 'prompt': text, 'seed': seed, 'results': results,
+            'fastest': fastest,
+            'skipped_disabled': [m for m in groups[group] if m not in todo],
+            'note': 'frames_per_sec = 输出帧数/生成耗时，越高越快；用 result_id 可继续 analyze_motion/render_video。'}
 
 
 @mcp.tool()
