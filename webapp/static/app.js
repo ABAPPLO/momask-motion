@@ -337,6 +337,7 @@ addChips('chips-kd', [
 
 document.querySelectorAll('.mtab').forEach((btn) => {
   btn.onclick = () => {
+    if (btn.classList.contains('disabled')) return;
     document.querySelectorAll('.mtab').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
     currentModel = btn.dataset.model;
@@ -407,6 +408,29 @@ function renderHistory() {
 }
 
 // ---------------------------------------------------------------- generation
+// ---------------------------------------------------------------- mode awareness
+// disable tabs for models unavailable in the current deployment mode (start.sh)
+(async function initMode() {
+  try {
+    const resp = await fetch('/api/health');
+    const h = await resp.json();
+    const enabled = h.models_enabled || {};
+    document.querySelectorAll('.mtab').forEach((btn) => {
+      const m = btn.dataset.model;
+      if (enabled[m] === false) {
+        btn.classList.add('disabled');
+        btn.title = `当前部署模式（${h.mode}）未启用该模型，需 full 模式启动`;
+      }
+    });
+    if (h.mode && h.mode !== 'full') {
+      const el = document.createElement('p');
+      el.className = 'note';
+      el.textContent = `部署模式：${h.mode}（部分模型未启用，切换模式：bash webapp/start.sh full）`;
+      document.getElementById('model-tabs').after(el);
+    }
+  } catch (e) { /* health unavailable — leave all tabs enabled */ }
+})();
+
 async function generate() {
   let body, endpoint, spinnerNote;
   const seed = +$('seed').value || 10107;

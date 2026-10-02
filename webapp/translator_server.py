@@ -91,7 +91,11 @@ def main():
         model_dir = OPUS_DIR if args.model == 'nllb' else NLLB_DIR
         args.model = 'opus' if model_dir == OPUS_DIR else 'nllb'
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device_env = os.environ.get('TRANSLATOR_DEVICE', 'auto').lower()
+    if device_env in ('cpu', 'cuda', 'cuda:0'):
+        device = torch.device(device_env)
+    else:
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f'loading {args.model} translator on {device} ...', flush=True)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_dir, local_files_only=True).to(device).eval()

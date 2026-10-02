@@ -134,27 +134,38 @@ def _describe(j, fps):
 # ------------------------------------------------------------------ tools
 @mcp.tool()
 def list_models() -> dict:
-    """列出可用的动作生成模型及各自能力，返回每个模型的适用场景与参数说明。"""
+    """列出可用的动作生成模型及各自能力（自动反映当前部署模式 full/lite/minimal）。"""
+    try:
+        h = httpx.get(WEBAPP + '/api/health', timeout=10).json()
+        enabled = h.get('models_enabled', {})
+        mode = h.get('mode', 'full')
+    except Exception:
+        enabled, mode = {}, 'unknown'
+    models = [
+        {'id': 'momask', 'type': 'single-person',
+         'desc': 'MoMask (CVPR 2024) 单人文本生成动作，20fps，时长可指定（0=自动，最长9.8s）',
+         'best_for': '单人动作、身体部位/方向控制'},
+        {'id': 'momask_dual', 'type': 'two-person-baseline',
+         'desc': '两个 MoMask 单人动作独立生成后并排摆放——无真实交互，仅作对比基线',
+         'best_for': '展示"单人模型做不了交互"的对照'},
+        {'id': 'intergen', 'type': 'two-person',
+         'desc': 'InterGen (IJCV 2024) 双人交互扩散模型，一条描述生成两人 210帧@30fps（约7s）',
+         'best_for': '打斗/拥抱/共舞等真实双人互动'},
+        {'id': 'in2in', 'type': 'two-person',
+         'desc': 'in2IN (CVPRW 2024) 双人扩散模型，交互描述 + 每人独立描述，210帧@30fps',
+         'best_for': '需要分别控制两人动作风格'},
+        {'id': 'kimodo', 'type': 'single-person',
+         'desc': 'NVIDIA Kimodo 原版 (nv-tlabs/kimodo, SOMA-RP v1.1)，700h 生产级动捕训练，'
+                 'SOMA 77 关节（含手指），30fps，时长 1~10s；文本编码在 CPU 运行（首次加载约 2~5 分钟）',
+         'best_for': '高质量单人动作、与学术模型对比工业级数据的效果'},
+    ]
+    for m in models:
+        m['enabled'] = enabled.get(m['id'], True)
     return {
-        'models': [
-            {'id': 'momask', 'type': 'single-person',
-             'desc': 'MoMask (CVPR 2024) 单人文本生成动作，20fps，时长可指定（0=自动，最长9.8s）',
-             'best_for': '单人动作、身体部位/方向控制'},
-            {'id': 'momask_dual', 'type': 'two-person-baseline',
-             'desc': '两个 MoMask 单人动作独立生成后并排摆放——无真实交互，仅作对比基线',
-             'best_for': '展示"单人模型做不了交互"的对照'},
-            {'id': 'intergen', 'type': 'two-person',
-             'desc': 'InterGen (IJCV 2024) 双人交互扩散模型，一条描述生成两人 210帧@30fps（约7s）',
-             'best_for': '打斗/拥抱/共舞等真实双人互动'},
-            {'id': 'in2in', 'type': 'two-person',
-             'desc': 'in2IN (CVPRW 2024) 双人扩散模型，交互描述 + 每人独立描述，210帧@30fps',
-             'best_for': '需要分别控制两人动作风格'},
-            {'id': 'kimodo', 'type': 'single-person',
-             'desc': 'NVIDIA Kimodo 原版 (nv-tlabs/kimodo, SOMA-RP v1.1)，700h 生产级动捕训练，'
-                     'SOMA 77 关节（含手指），30fps，时长 1~10s；文本编码在 CPU 运行（首次加载约 2~5 分钟）',
-             'best_for': '高质量单人动作、与学术模型对比工业级数据的效果'},
-        ],
-        'notes': '所有模型支持中文提示词（自动本地翻译成英文）；生成结果用 analyze_motion/render_video 做量化分析与视频渲染。',
+        'mode': mode,
+        'models': models,
+        'notes': '所有模型支持中文提示词（自动本地翻译成英文）；生成结果用 analyze_motion/render_video 做量化分析与视频渲染。'
+                 f'当前部署模式 {mode}，切换模式用 bash webapp/start.sh [full|lite|minimal]。',
     }
 
 

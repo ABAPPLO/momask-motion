@@ -111,3 +111,17 @@ pip install numpy==1.26.4 scipy yacs clip-anytorch==2.5.2 matplotlib pillow tqdm
 ```
 
 MCP 工具 `generate_kimodo(text, duration_seconds, seed, auto_translate, render_video)` 同步可用；`analyze_motion` / `render_video` 已适配 SOMA 77 关节索引。
+
+## 部署模式（按资源自选）
+
+```bash
+bash webapp/start.sh full      # 完整：5 模型全开，翻译在 GPU（默认推荐）
+bash webapp/start.sh lite      # 低CPU：跳过 Kimodo（省 ~17GB 内存），翻译切 CPU（省 2.6GB 显存）
+bash webapp/start.sh minimal   # 精简：仅 MoMask 单人/拼合 + 翻译(CPU)
+bash webapp/start.sh auto      # 自动检测资源选择模式
+bash webapp/start.sh status    # 查看各服务状态
+bash webapp/start.sh stop      # 停止全部
+```
+
+- 各模式能力由后端 `/api/health` 的 `models_enabled` 统一暴露，网页标签页自动禁用不可用模型，MCP `list_models` 同步反映
+- `auto` 判定规则：无 GPU 或空闲显存 <4GB → minimal；可用内存 <26GB 或核数 <4 → lite；否则 full

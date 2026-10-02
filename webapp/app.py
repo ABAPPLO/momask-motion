@@ -195,6 +195,26 @@ app = Flask(__name__, static_folder='static', static_url_path='/static')
 MODEL = None
 GEN_LOCK = threading.Lock()
 
+# deployment mode: full / lite / minimal (see webapp/start.sh)
+PLATFORM_MODE = os.environ.get('MOMASK_MODE', 'full').lower()
+MODE_ENABLED = {
+    'momask': True,
+    'momask_dual': True,
+    'intergen': PLATFORM_MODE == 'full' or PLATFORM_MODE == 'lite',
+    'in2in': PLATFORM_MODE == 'full' or PLATFORM_MODE == 'lite',
+    'kimodo': PLATFORM_MODE == 'full',
+}
+
+
+def _reject_if_disabled(model_key):
+    """Returns a jsonify response when the model is disabled in this mode."""
+    if MODE_ENABLED.get(model_key):
+        return None
+    return jsonify({
+        'error': f'模型 {model_key} 在当前部署模式（{PLATFORM_MODE}）下未启用。'
+                 f'如需使用请以 full 模式重启：bash webapp/start.sh full',
+    }), 503
+
 INTERACT_ENV_PYTHON = '/home/applo/anaconda3/envs/interact/bin/python'
 INTERGEN_WORKER = '/home/applo/project/InterGen/worker_intergen.py'
 IN2IN_WORKER = '/home/applo/project/in2IN/worker_in2in.py'
@@ -317,7 +337,8 @@ def index():
 @app.route('/api/health')
 def health():
     return jsonify({'status': 'ok', 'model_loaded': MODEL is not None,
-                    'device': str(MODEL.device) if MODEL else None})
+                    'device': str(MODEL.device) if MODEL else None,
+                    'mode': PLATFORM_MODE, 'models_enabled': MODE_ENABLED})
 
 
 @app.route('/api/generate', methods=['POST'])
@@ -436,6 +457,9 @@ def ensure_kimodo(timeout=600):
 
 @app.route('/api/generate_kimodo', methods=['POST'])
 def api_generate_kimodo():
+    rejected = _reject_if_disabled('kimodo')
+    if rejected:
+        return rejected
     payload = request.get_json(force=True, silent=True) or {}
     translations = translate_payload_texts(payload, ['text'])
     text = (payload.get('text') or '').strip()
@@ -508,6 +532,9 @@ def result_file(rid, fname):
 @app.route('/api/generate_interaction', methods=['POST'])
 def api_generate_interaction():
     payload = request.get_json(force=True, silent=True) or {}
+    rejected = _reject_if_disabled(payload.get('model', ''))
+    if rejected:
+        return rejected
     translations = translate_payload_texts(payload, ['interaction', 'ind1', 'ind2'])
     model_key = payload.get('model', '')
     if model_key not in WORKERS:
