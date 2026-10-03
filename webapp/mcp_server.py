@@ -317,7 +317,7 @@ def analyze_motion(result_id: str) -> dict:
     for i, j in enumerate(persons):
         out['per_person'].append({'person': i, **_describe(j, fps)})
     if len(persons) == 2:
-        dist = np.linalg.norm(persons[0][:, ROOT] - persons[1][:, ROOT], axis=1)
+        dist = np.linalg.norm(persons[0][:, 0] - persons[1][:, 0], axis=1)  # root is joint 0 in both skeletons
         out['pair'] = {
             'root_distance_min_m': round(float(dist.min()), 2),
             'root_distance_max_m': round(float(dist.max()), 2),
