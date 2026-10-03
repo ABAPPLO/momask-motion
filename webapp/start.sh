@@ -88,20 +88,24 @@ export MOMASK_MODE=$MODE
 export TRANSLATOR_DEVICE
 
 # 1. 主服务（MoMask + 所有 API）
-(cd "$ROOT" && nohup "$MOMASK_PY" webapp/app.py --port 7862 > /tmp/momask_web.log 2>&1 &)
+(cd "$ROOT" && setsid nohup "$MOMASK_PY" webapp/app.py --port 7862 \
+   </dev/null >/tmp/momask_web.log 2>&1 &)
 echo "主服务启动中 (port 7862)..."
 
 # 2. 翻译 sidecar（健康检查会由主服务自动拉起，这里显式启动以便立即可用）
-(cd "$WEBAPP" && nohup "$INTERACT_PY" translator_server.py > /tmp/translator.log 2>&1 &)
+(cd "$WEBAPP" && setsid nohup "$INTERACT_PY" translator_server.py \
+   </dev/null >/tmp/translator.log 2>&1 &)
 echo "翻译服务启动中 (port 7863, device=$TRANSLATOR_DEVICE)..."
 
 # 3. MCP Server
-(cd "$WEBAPP" && nohup "$INTERACT_PY" mcp_server.py > /tmp/mcp_server.log 2>&1 &)
+(cd "$WEBAPP" && setsid nohup "$INTERACT_PY" mcp_server.py \
+   </dev/null >/tmp/mcp_server.log 2>&1 &)
 echo "MCP Server 启动中 (port 7864)..."
 
 # 4. Kimodo sidecar（仅 full 模式；lite/minimal 下主服务也会拒绝 kimodo 请求）
 if [ "$MODE" = "full" ]; then
-  (cd "$WEBAPP" && nohup "$KIMODO_PY" kimodo_server.py > /tmp/kimodo_server.log 2>&1 &)
+  (cd "$WEBAPP" && setsid nohup "$KIMODO_PY" kimodo_server.py \
+     </dev/null >/tmp/kimodo_server.log 2>&1 &)
   echo "Kimodo sidecar 启动中 (port 7865，加载约 2 分钟)..."
 fi
 
